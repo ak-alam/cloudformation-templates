@@ -1,0 +1,199 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: Launch template and autoscaling group
+
+
+Parameters:
+  EnvParamASG:
+    Description: Your environment name
+    Type: String
+
+  InstanceTypeParam:
+    Type: String
+    # Default: t2.micro
+    # AllowedValues:
+    #   - t2.micro
+    #   - t2.nano
+    # Description: Instance type selection
+
+  KeyNameParam:
+    # Type: 'AWS::EC2::KeyPair::KeyName'
+    # Description: Key Name pair for ssh
+    Type: String
+  ImageIdParam:
+    Type: String
+    # Default: ami-051dfed8f67f095f5
+
+  WebServerLaunchTemplateNameParam:
+    Type: String
+    # AllowedPattern: '[a-zA-Z0-9\(\)\.\-/_]+'
+    # Default: WebServerLaunchTemplate
+
+  SecurityGroupParam:
+    Description: From Security Group Stack
+    Type: String
+  
+  IamInstanceProfileParam:
+    Description: From IAM Stack
+    Type: String
+  
+  DBHOSTParam:
+    Description: From NLB Stack
+    Type: String
+
+  PrivateSub1Param:
+    Description: From VPC Stack
+    Type: String 
+
+  PrivateSub2Param:
+    Description: From VPC Stack
+    Type: String 
+
+  TargetGroupARNsParam:
+    Description: From VPC Stack
+    Type: String
+
+Resources:
+  WebserverLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties: 
+      # LaunchTemplateName: AkWebServerTemplate
+      LaunchTemplateName: !Ref WebServerLaunchTemplateNameParam
+      LaunchTemplateData: 
+        IamInstanceProfile: 
+          Name: !Ref IamInstanceProfileParam
+        ImageId: !Ref ImageIdParam
+        InstanceType: !Ref InstanceTypeParam
+        KeyName: !Ref KeyNameParam
+        Monitoring: 
+          Enabled: true
+        SecurityGroupIds: 
+        - !Ref SecurityGroupParam
+        UserData: 
+          Fn::Base64: !Sub 
+            - |
+              #!/bin/bash
+              yum update -y
+              curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+              unzip awscliv2.zip
+              ./aws/install
+              yum install amazon-linux-extras httpd -y 
+              amazon-linux-extras install php7.2 -y
+              yum install httpd -y
+              systemctl start httpd
+              systemctl enable httpd
+              cd /var/www/html
+              wget https://wordpress.org/latest.tar.gz
+              tar -xzf latest.tar.gz
+              cp -r wordpress/* /var/www/html/
+              cp -r wp-config-sample.php wp-config.php
+              # DB_HOST=akbar-database.ci6pixnrgmml.us-east-1.rds.amazonaws.com
+              db_name=`aws ssm get-parameter --name "/ak/db_name" --query 'Parameter.Value' --output text --region us-east-1`
+              db_username=`aws ssm get-parameter --name "/ak/db_username" --query 'Parameter.Value' --output text --region us-east-1`
+              db_user_password=`aws ssm get-parameter --name "/ak/user_password" --query 'Parameter.Value' --output text --region us-east-1`
+              sed -i "s/database_name_here/$db_name/g" /var/www/html/wp-config.php
+              sed -i "s/username_here/$db_username/g" /var/www/html/wp-config.php
+              sed -i "s/password_here/$db_user_password/g" /var/www/html/wp-config.php
+              sed -i "s/localhost/${DB_HOST}/g" /var/www/html/wp-config.php
+              #sed -i "s/wp_/wp1_/g" /var/www/html/wp-config.php
+              rm -rf wordpress
+              rm -rf latest.tar.gz
+              chmod -R 755 /var/www/html/*
+              chown -R apache:apache /var/www/html/*
+            # - DB_HOST: !GetAtt AkNLB.DNSName
+            - DB_HOST: !Ref DBHOSTParam
+  
+  EmailSNS:
+    Type: AWS::SNS::Topic
+    Properties: 
+      Subscription: 
+        - Endpoint: akbar.alam@eurustechnologies.com
+          Protocol: email
+
+
+  AutoSG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    DependsOn: WebserverLaunchTemplate
+    Properties: 
+      AutoScalingGroupName: WebServerASG
+      Cooldown: 120
+      HealthCheckGracePeriod: 180
+      HealthCheckType: ELB
+      LaunchTemplate: 
+        LaunchTemplateName: !Ref WebServerLaunchTemplateNameParam
+        Version: !GetAtt WebserverLaunchTemplate.LatestVersionNumber
+      MaxSize: 2
+      MinSize: 1
+      DesiredCapacity: 1
+      NotificationConfigurations: 
+        - TopicARN: !Ref EmailSNS
+          NotificationTypes:
+          - autoscaling:EC2_INSTANCE_LAUNCH
+          - autoscaling:EC2_INSTANCE_LAUNCH_ERROR
+          - autoscaling:EC2_INSTANCE_TERMINATE
+          - autoscaling:EC2_INSTANCE_TERMINATE_ERROR
+          - autoscaling:TEST_NOTIFICATION
+      Tags: 
+        - Key: Name
+          PropagateAtLaunch: true
+          Value: !Join ["-", [WebServer, !Ref EnvParamASG]]
+      TargetGroupARNs: 
+        - !Ref TargetGroupARNsParam
+      VPCZoneIdentifier: 
+        - !Ref PrivateSub1Param
+        - !Ref PrivateSub2Param
+
+  ASGScaleUpPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties: 
+      AdjustmentType: ChangeInCapacity
+      AutoScalingGroupName: !Ref AutoSG
+      Cooldown: 60
+      ScalingAdjustment: 1
+
+  ASGScaleDownPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties: 
+      AdjustmentType: ChangeInCapacity
+      AutoScalingGroupName: !Ref AutoSG
+      Cooldown: 60
+      ScalingAdjustment: -1
+
+  CPUAlarmHigh:
+    Type: AWS::CloudWatch::Alarm
+    Properties: 
+      AlarmActions: 
+        - !Ref ASGScaleUpPolicy
+      AlarmDescription: Add instance if CPU > 80 for 2 minutes
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions: 
+        - Name: AutoScalingGroupName
+          Value: !Ref AutoSG
+      EvaluationPeriods: 3
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Period: 120
+      Threshold: 80
+      TreatMissingData: breaching
+      
+  CPUAlarmLow:
+    Type: AWS::CloudWatch::Alarm
+    Properties: 
+      AlarmActions: 
+        - !Ref ASGScaleUpPolicy
+      AlarmDescription: Add instance if CPU < 40 for 2 minutes
+      ComparisonOperator: LessThanThreshold
+      Dimensions: 
+        - Name: AutoScalingGroupName
+          Value: !Ref AutoSG
+      EvaluationPeriods: 3
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Period: 120
+      Threshold: 40
+      TreatMissingData: breaching
+# # Outputs:
+# #   set of outputs

@@ -1,0 +1,63 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: SSM instance policy to dynamically fetching DB credentials in user script
+
+Metadata:
+  AWS::CloudFormation::Interface: 
+    ParameterGroups:
+      - 
+        Label: 
+          default: "Your environment name"
+        Parameters: 
+          - EnvParam
+
+Parameters:
+  EnvParam:
+    Description: Your environment name
+    Type: String
+
+#IAM Policy
+Resources:
+  SSMRole: 
+    Type: "AWS::IAM::Role"
+    Properties: 
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Effect: "Allow"
+            Principal: 
+              Service: 
+                - "ec2.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      Path: "/"
+  SSMpolicies: 
+    Type: "AWS::IAM::Policy"
+    Properties: 
+      PolicyName: !Join ["-", [ak, SSM, !Ref EnvParam]]
+      PolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - Effect: "Allow"
+            Action: 
+             - 'ssm:DescribeAssociation'
+             - 'ssm:GetParameter'
+             - 'ssm:GetParameters'
+
+            Resource: "*"
+      Roles: 
+        - Ref: "SSMRole"
+  SSMInstanceProfile: 
+    Type: "AWS::IAM::InstanceProfile"
+    Properties: 
+      Path: "/"
+      Roles: 
+        - Ref: "SSMRole"
+
+Outputs:
+  SSMInstanceProfile:
+    Description: SSM instance profile export
+    Value: !Ref SSMInstanceProfile
+    Export: 
+      Name: !Join ["-", [akbar, !Ref EnvParam, SSMInstanceProfile]]

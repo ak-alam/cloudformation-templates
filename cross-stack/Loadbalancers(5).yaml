@@ -1,0 +1,125 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: Security Groups
+
+Metadata:
+  AWS::CloudFormation::Interface: 
+    ParameterGroups:
+      - 
+        Label: 
+          default: "Your environment name"
+        Parameters: 
+          - EnvParam
+
+Parameters:
+  EnvParam:
+    Description: Your environment name
+    Type: String
+
+Resources:
+  NLB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Join ["-", [ak, NLB, !Ref EnvParam]]
+      Scheme: internal
+      Subnets:
+        - Fn::ImportValue:
+            !Join ["-", [akbar, !Ref EnvParam, PrivateSub1]]
+        - Fn::ImportValue:
+            !Join ["-", [akbar, !Ref EnvParam, PrivateSub2]]
+      Type: network
+      Tags: 
+        - Key: Name
+          Value: !Join ["-", [ak, NLB, !Ref EnvParam]]
+  NLBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Join ["-", [ak, NTG, !Ref EnvParam]]
+      Port: 3306
+      Protocol: TCP
+      VpcId: 
+        Fn::ImportValue:
+          !Join ["-", [akbar, VPC, !Ref EnvParam]]
+      HealthCheckEnabled: True
+      HealthCheckIntervalSeconds: 10
+      HealthCheckPort: 3306
+      HealthCheckProtocol: TCP
+      HealthCheckTimeoutSeconds: 10
+      HealthyThresholdCount: 3
+      TargetGroupAttributes: 
+        -   Key: deregistration_delay.timeout_seconds
+            Value: 60
+      Targets:
+        - Id: 
+            Fn::ImportValue:
+              !Join ["-", [akbar, !Ref EnvParam, DBRDS]]
+      
+  NLBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref NLB
+      Port: 3306
+      Protocol: TCP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref NLBTargetGroup
+
+  #Application load balancer (Internet facing)
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties: 
+      Name: !Join ["-", [ak, LB, !Ref EnvParam]]
+      Scheme: internet-facing
+      SecurityGroups: 
+        - Fn::ImportValue:
+            !Join ["-", [akbar, !Ref EnvParam, ExternalLBSG]]
+      Subnets: 
+        - Fn::ImportValue:
+            !Join ["-", [akbar, !Ref EnvParam, PubSub1]]
+        - Fn::ImportValue:
+            !Join ["-", [akbar, !Ref EnvParam, PubSub2]]
+      Tags: 
+        - Key: Name
+          Value: !Join ["-", [ak, LB, !Ref EnvParam]]
+  LBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Join ["-", [ak, TG, !Ref EnvParam]]
+      HealthCheckIntervalSeconds: 6
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      VpcId: 
+        Fn::ImportValue:
+          !Join ["-", [akbar, VPC, !Ref EnvParam]]
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 2
+      TargetGroupAttributes: 
+        -   Key: deregistration_delay.timeout_seconds
+            Value: 60
+
+      # Targets:
+      # - Id: !Ref WebServer
+
+  LBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ALB
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref LBTargetGroup
+
+Outputs:
+  LBTargetGroup:
+    Description: Load balancer target group to register the target.
+    Value: !Ref LBTargetGroup
+    Export: 
+      Name: !Join ["-", [akbar, !Ref EnvParam, LBTargetGroup]]
+
+  NLB:
+    Description: Network load balancer
+    Value: !GetAtt NLB.DNSName
+    Export: 
+      Name: !Join ["-", [akbar, !Ref EnvParam, NLB]]

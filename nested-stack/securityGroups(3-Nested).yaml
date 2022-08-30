@@ -1,0 +1,95 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: Security Groups
+
+Parameters:
+  EnvParamSg:
+    Description: Your environment name
+    Type: String
+
+  Vpcparam:
+    Description: VPC Id import from vpc stack
+    Type: String
+  
+
+Resources: 
+  #Security Groups
+  #Load balancer security groups
+  ExternalLBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Load balancer security group
+      # VpcId: !ImportValue !Join ["-", [akbar, VPC, !Ref EnvParam]]
+      VpcId: !Ref Vpcparam
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Join ["-", [ExternalLB, SG, !Ref EnvParamSg]]
+  #Webserver Security group
+  webserverSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Web server SG-
+      # VpcId: !ImportValue !Join ["-", [akbar, VPC, !Ref EnvParam]]
+      VpcId: !Ref Vpcparam
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref ExternalLBSG
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          SourceSecurityGroupId: !Ref SSHSG
+      Tags:
+        - Key: Name
+          Value: !Join ["-", [webserver, SG, !Ref EnvParamSg]]
+  #SSH Sercurity Group        
+  SSHSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: SSH server SG
+      VpcId: !Ref Vpcparam
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0       
+      Tags:
+        - Key: Name
+          Value: !Join ["-", [ssh, SG, !Ref EnvParamSg]]
+  # #DB Server Security group.
+  DBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Database SG
+      VpcId: !Ref Vpcparam
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          SourceSecurityGroupId: !Ref SSHSG      
+      Tags:
+        - Key: Name
+          Value: !Join ["-", [DB, SG, !Ref EnvParamSg]]
+
+Outputs: 
+  ExternalLBSGOut:
+    Description: Load balancer security group
+    Value: !Ref ExternalLBSG
+
+  webserverSGOut:
+    Description: WebServer security group
+    Value: !Ref webserverSG
+
+  DBSGOut:
+    Description: Databases security group
+    Value: !Ref DBSG

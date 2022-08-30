@@ -1,0 +1,608 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: Wordpress Site Hosting
+Metadata:
+  AWS::CloudFormation::Interface: 
+    ParameterGroups:
+      - 
+        Label: 
+          default: "Your environment name"
+        Parameters: 
+          - EnvParam
+
+      - 
+        Label: 
+          default: "VPC CIDR"
+        Parameters: 
+          - VpcCIDR
+      - 
+        Label: 
+          default: "Subnet CIDR"
+        Parameters:
+          - PublicSubnet1CIDR
+          - PublicSubnet2CIDR
+          - PrivateSubnet1CIDR
+          - PrivateSubnet2CIDR
+      - 
+        Label: 
+          default: "Instance Parameters"
+        Parameters: 
+          - InstanceType
+          - KeyName
+          - AmazonImageID
+      - 
+        Label: 
+          default: "Email For SNS Topic"
+        Parameters: 
+          - EmailSNS
+      - 
+        Label: 
+          default: "AutoScaling Launch Template Name"
+        Parameters: 
+          - WebServerLaunchTemplateName
+
+Parameters:
+  EnvParam:
+    Description: Your environment name
+    Type: String
+
+  VpcCIDR:
+    Default: 10.0.0.0/16
+    Description: Please enter the IP range (CIDR notation) for this VPC
+    Type: String
+
+  PublicSubnet1CIDR:
+    Default: 10.0.1.0/24
+    Description: Please enter the IP range (CIDR notation) for the public subnet 1
+    Type: String
+
+  PublicSubnet2CIDR:
+    Default: 10.0.2.0/24
+    Description: Please enter the IP range (CIDR notation) for the public subnet 2
+    Type: String
+
+  PrivateSubnet1CIDR:
+    Default: 10.0.3.0/24
+    Description: Please enter the IP range (CIDR notation) for the private subnet 1
+    Type: String
+
+  PrivateSubnet2CIDR:
+    Default: 10.0.4.0/24
+    Description: Please enter the IP range (CIDR notation) for the private subnet 2
+    Type: String
+  
+  InstanceType:
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+      - t2.micro
+      - t2.nano
+  
+  KeyName:
+    Type: 'AWS::EC2::KeyPair::KeyName'
+
+  AmazonImageID:
+    Type: String
+    Default: ami-051dfed8f67f095f5
+  
+  EmailSNS:
+    Description: Enter a valid email.
+    Type: String
+  
+  WebServerLaunchTemplateName:
+    AllowedPattern: '[a-zA-Z0-9\(\)\.\-/_]+'
+    Type: String
+    Default: WebServerLaunchTemplate
+
+
+Resources:
+  #VPC Creation
+  AkVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsHostnames: true
+      Tags:
+      - Key: Name
+        Value: !Join ["-", [ak, VPC, !Ref EnvParam]]
+
+  #Subnets Creations
+  AkPubSub1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref AkVPC
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: !Ref PublicSubnet1CIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+      - Key: Name
+        Value: !Join ["-", [ak, AkPubSub1, !Ref EnvParam]]
+  AkPubSub2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref AkVPC
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: !Ref PublicSubnet2CIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+      - Key: Name
+        Value: !Join ["-", [ak, AkPubSub2, !Ref EnvParam]] 
+  AkPrivateSub1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref AkVPC
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: !Ref PrivateSubnet1CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: Name
+        Value: !Join ["-", [ak, AkPrivateSub1, !Ref EnvParam]]
+  AkPrivateSub2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref AkVPC
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: !Ref PrivateSubnet2CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: Name
+        Value: !Join ["-", [ak, AkPrivateSub2, !Ref EnvParam]]
+
+  #Public and Private Route Table Creation and route assosication.
+  AkPubRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref AkVPC
+      Tags:
+        - Key: Name
+          Value: !Join ["-", [ak, PubRT, !Ref EnvParam]]
+  AkIGWRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AkIGWAttachment
+    Properties:
+      RouteTableId: !Ref AkPubRT
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId: !Ref AkIGW        
+  AkPrivateRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref AkVPC
+      Tags:
+        - Key: Name
+          Value: !Join ["-", [ak, AkPrivateRT, !Ref EnvParam]]
+  AkNATGWRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AkNatGW
+    Properties:
+      RouteTableId: !Ref AkPrivateRT
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId: !Ref AkNatGW  
+
+  #Internet Gateway and Nat Gateway
+  AkIGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+      - Key: Name
+        Value: AkIGW
+  AkIGWAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref AkIGW
+      VpcId: !Ref AkVPC
+  AkNatGW:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt AkNatGWEIP.AllocationId
+      SubnetId: !Ref AkPubSub1
+      Tags:
+      - Key: Name
+        Value: !Join ["-", [ak, NatGW, !Ref EnvParam]]
+  AkNatGWEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: AkVPC
+
+  # Public and private route table subnet associations   
+  AkPubSub1RTAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref AkPubSub1
+      RouteTableId: !Ref AkPubRT
+  AkPubSub2RTAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref AkPubSub2
+      RouteTableId: !Ref AkPubRT
+  AkPrivateSub1RTAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref AkPrivateSub1
+      RouteTableId: !Ref AkPrivateRT
+  AkPrivateSub2RTAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref AkPrivateSub2
+      RouteTableId: !Ref AkPrivateRT
+
+  #Security Groups
+  #Load balancer security groups
+  AkExternalLBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Load balancer security group
+      VpcId: !Ref AkVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Join ["-", [LB, SG, !Ref EnvParam]]
+  #Webserver Security group
+  webserverSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Web server SG
+      VpcId: !Ref AkVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref AkExternalLBSG
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          SourceSecurityGroupId: !Ref SSHSG
+      Tags:
+        - Key: Name
+          Value: !Join ["-", [webserver, SG, !Ref EnvParam]]
+  #SSH Sercurity Group        
+  SSHSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: SSH server SG
+      VpcId: !Ref AkVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0       
+      Tags:
+        - Key: Name
+          Value: !Join ["-", [ssh, SG, !Ref EnvParam]]
+  #DB Server Security group.
+  DBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Database SG
+      VpcId: !Ref AkVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          SourceSecurityGroupId: !Ref SSHSG       
+      Tags:
+        - Key: Name
+          Value: !Join ["-", [DB, SG, !Ref EnvParam]]
+
+  #IAM Policy
+  AKSSMRole: 
+    Type: "AWS::IAM::Role"
+    Properties: 
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Effect: "Allow"
+            Principal: 
+              Service: 
+                - "ec2.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      Path: "/"
+  AKSSMpolicies: 
+    Type: "AWS::IAM::Policy"
+    Properties: 
+      PolicyName: !Join ["-", [ak, SSM, !Ref EnvParam]]
+      PolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - Effect: "Allow"
+            Action: 
+             - 'ssm:DescribeAssociation'
+             - 'ssm:GetParameter'
+             - 'ssm:GetParameters'
+
+            Resource: "*"
+      Roles: 
+        - Ref: "AKSSMRole"
+  AkSSMInstanceProfile: 
+    Type: "AWS::IAM::InstanceProfile"
+    Properties: 
+      Path: "/"
+      Roles: 
+        - Ref: "AKSSMRole"
+
+
+
+  #Load Balancers
+  #Application load balancer (Internet facing)
+  AkLB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    DependsOn: AkExternalLBSG
+    Properties: 
+      Name: !Join ["-", [ak, LB, !Ref EnvParam]]
+      Scheme: internet-facing
+      SecurityGroups: 
+        - !Ref AkExternalLBSG
+      Subnets: 
+        - !Ref AkPubSub1
+        - !Ref AkPubSub2
+      Tags: 
+        - Key: Name
+          Value: !Join ["-", [ak, LB, !Ref EnvParam]]
+  AkLBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Join ["-", [ak, TG, !Ref EnvParam]]
+      HealthCheckIntervalSeconds: 6
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      VpcId: !Ref AkVPC
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 2
+      # Targets:
+      # - Id: !Ref WebServer
+
+  AkLBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref AkLB
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref AkLBTargetGroup
+
+    #Network Load balancer (Internal)
+  AkNLB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Join ["-", [ak, NLB, !Ref EnvParam]]
+      Scheme: internal
+      Subnets:
+        - !Ref AkPrivateSub1
+        - !Ref AkPrivateSub2
+      Type: network
+      Tags: 
+        - Key: Name
+          Value: !Join ["-", [ak, NLB, !Ref EnvParam]]
+  AkNLBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      # Name: !Join ["-" , [!Ref 'AWS::StackName', Target]]
+      Name: !Join ["-", [ak, NTG, !Ref EnvParam]]
+      Port: 3306
+      Protocol: TCP
+      VpcId: !Ref AkVPC
+      HealthCheckEnabled: True
+      HealthCheckIntervalSeconds: 10
+      HealthCheckPort: 3306
+      HealthCheckProtocol: TCP
+      HealthCheckTimeoutSeconds: 10
+      HealthyThresholdCount: 3
+      Targets:
+        - Id: !Ref DBRDS
+    
+  AkNLBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref AkNLB
+      Port: 3306
+      Protocol: TCP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref AkNLBTargetGroup
+
+    #Instances
+  #DB Instance
+  DBRDS:
+    Type: AWS::EC2::Instance
+    DependsOn: AkSSMInstanceProfile
+    Properties:
+      ImageId: !Ref AmazonImageID
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      SubnetId: !Ref AkPrivateSub1
+      SecurityGroupIds:
+        - !Ref DBSG
+      IamInstanceProfile: !Ref AkSSMInstanceProfile
+      Tags:
+        - Key: Name
+          Value: !Join ["-", [ak, RDS, !Ref EnvParam]]
+      UserData:
+        Fn::Base64: |
+            #!/bin/bash
+            yum update -y
+            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+            unzip awscliv2.zip
+            ./aws/install
+            db_name=`aws ssm get-parameter --name "/ak/db_name" --query 'Parameter.Value' --output text --region us-east-1`
+            db_username=`aws ssm get-parameter --name "/ak/db_username" --query 'Parameter.Value' --output text --region us-east-1`
+            db_user_password=`aws ssm get-parameter --name "/ak/user_password" --query 'Parameter.Value' --output text --region us-east-1`
+            sudo amazon-linux-extras install -y lamp-mariadb10.2-php7.2
+            sudo yum install mysql-server -y
+            sudo systemctl enable mariadb
+            sudo systemctl start mariadb
+            mysql -h localhost -u root -e "create database $db_name"
+            mysql -h localhost -u root -e "CREATE USER '$db_username'@'%' IDENTIFIED BY '$db_user_password'"
+            mysql -h localhost -u root -e "GRANT ALL PRIVILEGES ON $db_name.* TO '$db_username'@'%' WITH GRANT OPTION"
+            sudo yum -y install expect
+            MYSQL_ROOT_PASS=admin
+            sleep 5
+            echo "Set root password"
+            expect -f - <<-EOF
+                set timeout 10
+                spawn mysql_secure_installation
+                expect "Enter current password for root (enter for none):"
+                send -- "\r"
+                expect "Set root password?"
+                send -- "y\r"
+                expect "New password:"
+                send -- "${MYSQL_ROOT_PASS}\r"
+                expect "Re-enter new password:"
+                send -- "${MYSQL_ROOT_PASS}\r"
+                expect "Remove anonymous users?"
+                send -- "y\r"
+                expect "Disallow root login remotely?"
+                send -- "n\r"
+                expect "Remove test database and access to it?"
+                send -- "y\r"sudo
+                expect "Reload privilege tables now?"
+                send -- "y\r"
+                expect eof
+            EOF
+  #AutoScaling group and template
+  WebserverLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    DependsOn: AkSSMInstanceProfile
+    Properties:
+      LaunchTemplateName: !Ref WebServerLaunchTemplateName
+      LaunchTemplateData:
+        ImageId: !Ref AmazonImageID
+        InstanceType: !Ref InstanceType
+        KeyName: !Ref KeyName
+        Monitoring:
+          Enabled: true
+        SecurityGroupIds:
+          - !Ref webserverSG
+        IamInstanceProfile:
+          Name: !Ref AkSSMInstanceProfile
+        UserData:
+          Fn::Base64: !Sub
+            - |
+              #!/bin/bash
+              yum update -y
+              curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+              unzip awscliv2.zip
+              ./aws/install
+              yum install amazon-linux-extras httpd -y 
+              amazon-linux-extras install php7.2 -y
+              yum install httpd -y
+              systemctl start httpd
+              systemctl enable httpd
+              cd /var/www/html
+              wget https://wordpress.org/latest.tar.gz
+              tar -xzf latest.tar.gz
+              cp -r wordpress/* /var/www/html/
+              cp -r wp-config-sample.php wp-config.php
+              # DB_HOST=akbar-database.ci6pixnrgmml.us-east-1.rds.amazonaws.com
+              db_name=`aws ssm get-parameter --name "/ak/db_name" --query 'Parameter.Value' --output text --region us-east-1`
+              db_username=`aws ssm get-parameter --name "/ak/db_username" --query 'Parameter.Value' --output text --region us-east-1`
+              db_user_password=`aws ssm get-parameter --name "/ak/user_password" --query 'Parameter.Value' --output text --region us-east-1`
+              sed -i "s/database_name_here/$db_name/g" /var/www/html/wp-config.php
+              sed -i "s/username_here/$db_username/g" /var/www/html/wp-config.php
+              sed -i "s/password_here/$db_user_password/g" /var/www/html/wp-config.php
+              sed -i "s/localhost/${DB_HOST}/g" /var/www/html/wp-config.php
+              #sed -i "s/wp_/wp1_/g" /var/www/html/wp-config.php
+              rm -rf wordpress
+              rm -rf latest.tar.gz
+              chmod -R 755 /var/www/html/*
+              chown -R apache:apache /var/www/html/*
+            - DB_HOST: !GetAtt AkNLB.DNSName
+
+  SNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      Subscription:
+        - Endpoint: !Ref EmailSNS
+          Protocol: email
+
+  WebServerAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: akbarASG
+      VPCZoneIdentifier:
+        - !Ref AkPrivateSub1
+        - !Ref AkPrivateSub2
+      HealthCheckGracePeriod: 120
+      HealthCheckType: ELB
+      LaunchTemplate:
+        # LaunchTemplateId: !Ref WebserverLaunchTemplate
+        LaunchTemplateName: !Ref WebServerLaunchTemplateName
+        Version: !GetAtt WebserverLaunchTemplate.LatestVersionNumber
+      MinSize: 1
+      MaxSize: 2
+      DesiredCapacity: 1
+      Tags:
+        - Key: Name
+          Value: Ak-WebServer
+          PropagateAtLaunch: true
+      TargetGroupARNs:
+        - !Ref AkLBTargetGroup
+      NotificationConfiguration:
+        TopicARN: !Ref SNSTopic
+        NotificationTypes:
+          - 'autoscaling:EC2_INSTANCE_LAUNCH'
+          - 'autoscaling:EC2_INSTANCE_TERMINATE'
+
+  WebServerScaleUpPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AdjustmentType: ChangeInCapacity
+      AutoScalingGroupName: !Ref WebServerAutoScalingGroup
+      Cooldown: 60
+      ScalingAdjustment: 1
+  WebServerScaleDownPolicy:
+    Type: 'AWS::AutoScaling::ScalingPolicy'
+    Properties:
+      AdjustmentType: ChangeInCapacity
+      AutoScalingGroupName: !Ref WebServerAutoScalingGroup
+      Cooldown: 60
+      ScalingAdjustment: -1
+
+  CPUAlarmHigh:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Scale-up if CPU > 70% for 2 minutes
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Period: 120
+      EvaluationPeriods: 2
+      Threshold: 70
+      AlarmActions:
+        - !Ref WebServerScaleUpPolicy
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref WebServerAutoScalingGroup
+      ComparisonOperator: GreaterThanThreshold
+
+  CPUAlarmLow:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmDescription: Scale-down if CPU < 40% for 2 minutes
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Period: 120
+      EvaluationPeriods: 2
+      Threshold: 40
+      AlarmActions:
+        - !Ref WebServerScaleDownPolicy
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref WebServerAutoScalingGroup
+      ComparisonOperator: LessThanThreshold
+
+Outputs:
+  ExternaLoadBalancer:
+    Description: The URL of the ALB
+    Value: !GetAtt AkLB.DNSName

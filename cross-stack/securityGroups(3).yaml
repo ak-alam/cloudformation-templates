@@ -1,0 +1,113 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: Security Groups
+
+Metadata:
+  AWS::CloudFormation::Interface: 
+    ParameterGroups:
+      - 
+        Label: 
+          default: "Your environment name"
+        Parameters: 
+          - EnvParam
+
+Parameters:
+  EnvParam:
+    Description: Your environment name
+    Type: String
+
+Resources: 
+  #Security Groups
+  #Load balancer security groups
+  ExternalLBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Load balancer security group
+      # VpcId: !ImportValue !Join ["-", [akbar, VPC, !Ref EnvParam]]
+      VpcId: 
+        Fn::ImportValue:
+          !Join ["-", [akbar, VPC, !Ref EnvParam]] 
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Join ["-", [LB, SG, !Ref EnvParam]]
+  #Webserver Security group
+  webserverSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Web server SG-
+      # VpcId: !ImportValue !Join ["-", [akbar, VPC, !Ref EnvParam]]
+      VpcId: 
+        Fn::ImportValue:
+          !Join ["-", [akbar, VPC, !Ref EnvParam]]
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref ExternalLBSG
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          SourceSecurityGroupId: !Ref SSHSG
+      Tags:
+        - Key: Name
+          Value: !Join ["-", [webserver, SG, !Ref EnvParam]]
+  #SSH Sercurity Group        
+  SSHSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: SSH server SG
+      VpcId: 
+        Fn::ImportValue:
+          !Join ["-", [akbar, VPC, !Ref EnvParam]]
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0       
+      Tags:
+        - Key: Name
+          Value: !Join ["-", [ssh, SG, !Ref EnvParam]]
+  #DB Server Security group.
+  DBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Database SG
+      VpcId: 
+        Fn::ImportValue:
+          !Join ["-", [akbar, VPC, !Ref EnvParam]]
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          SourceSecurityGroupId: !Ref SSHSG      
+      Tags:
+        - Key: Name
+          Value: !Join ["-", [DB, SG, !Ref EnvParam]]
+
+Outputs: 
+  ExternalLBSG:
+    Description: Load balancer security group
+    Value: !Ref ExternalLBSG
+    Export: 
+      Name: !Join ["-", [akbar, !Ref EnvParam, ExternalLBSG]]
+
+  webserverSG:
+    Description: WebServer security group
+    Value: !Ref webserverSG
+    Export: 
+      Name: !Join ["-", [akbar, !Ref EnvParam, webserverSG]]
+
+  DBSG:
+    Description: Databases security group
+    Value: !Ref DBSG
+    Export: 
+      Name: !Join ["-", [akbar, !Ref EnvParam, DBSG]]

@@ -1,0 +1,137 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Root Stack Template
+
+Parameters:
+  VpcCIDR:
+    Default: 10.0.0.0/16
+    Description: Please enter the IP range (CIDR notation) for this VPC
+    Type: String
+
+  PublicSubnet1CIDR:
+    Default: 10.0.1.0/24
+    Description: Please enter the IP range (CIDR notation) for the public subnet 1
+    Type: String
+
+  PublicSubnet2CIDR:
+    Default: 10.0.2.0/24
+    Description: Please enter the IP range (CIDR notation) for the public subnet 2
+    Type: String
+
+  PublicSubnet3CIDR:
+    Default: 10.0.6.0/24
+    Description: Please enter the IP range (CIDR notation) for the public subnet 2
+    Type: String
+
+  PrivateSubnet1CIDR:
+    Default: 10.0.3.0/24
+    Description: Please enter the IP range (CIDR notation) for the private subnet 1
+    Type: String
+
+  PrivateSubnet2CIDR:
+    Default: 10.0.5.0/24
+    Description: Please enter the IP range (CIDR notation) for the private subnet 2
+    Type: String
+  
+  EnvRoot:
+    Type: String
+
+  InstanceType:
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+      - t2.micro
+      - t2.nano
+
+  KeyName:
+    Type: 'AWS::EC2::KeyPair::KeyName'
+
+  AmazonImageID:
+    Type: String
+    Default: ami-051dfed8f67f095f5
+
+  WebServerLaunchTemplateName:
+    Type: String
+    AllowedPattern: '[a-zA-Z0-9\(\)\.\-/_]+'
+    Default: WebServerLaunchTemplate
+
+Resources:
+  
+  VPCStack:
+    Type: AWS::CloudFormation::Stack
+    Properties: 
+      Parameters: 
+        #Param From VPCStack: 
+        Vpcparam: !Ref VpcCIDR
+        PublicSubnet1param: !Ref PublicSubnet1CIDR
+        PublicSubnet2param: !Ref PublicSubnet2CIDR
+        PublicSubnet3param: !Ref PublicSubnet3CIDR
+        PrivateSubnet1param: !Ref PrivateSubnet1CIDR
+        PrivateSubnet2param: !Ref PrivateSubnet2CIDR
+        EnvParamVPC: !Ref EnvRoot
+      TemplateURL: https://akbarnestedstacktest.s3.us-west-2.amazonaws.com/vpc(1-Nested).yaml
+      TimeoutInMinutes: 4
+
+  IAMStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      Parameters:
+        EnvParamIAM: !Ref EnvRoot
+      TemplateURL: https://akbarnestedstacktest.s3.us-west-2.amazonaws.com/IAM(2-Nested).yaml
+      TimeoutInMinutes: 4
+
+  SecurityGroupsStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: VPCStack
+    Properties: 
+      Parameters: 
+        Vpcparam: !GetAtt VPCStack.Outputs.VPCStackOut
+        EnvParamSg: !Ref EnvRoot
+      TemplateURL: https://akbarnestedstacktest.s3.us-west-2.amazonaws.com/securityGroups(3-Nested).yaml
+      TimeoutInMinutes: 4
+
+  DBInstanceStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      Parameters:
+        EnvParamDB: !Ref EnvRoot
+        InstanceTypeParam: !Ref InstanceType
+        KeyNameParam: !Ref KeyName
+        AmazonImageIDParam: !Ref AmazonImageID
+        SubnetIdParam: !GetAtt VPCStack.Outputs.PrivateSub1VPCStackOut
+        SecurityGroupIdsParam: !GetAtt SecurityGroupsStack.Outputs.DBSGOut
+        IamInstanceProfileParam: !GetAtt IAMStack.Outputs.SSMInstanceProfileOut
+      TemplateURL: https://akbarnestedstacktest.s3.us-west-2.amazonaws.com/DBInstance(4-Nested).yaml
+      TimeoutInMinutes: 4
+
+  LoadBalancersStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      Parameters:
+        EnvParamLB: !Ref EnvRoot
+        VpcLBParam: !GetAtt VPCStack.Outputs.VPCStackOut
+        PrivateSub1Param: !GetAtt VPCStack.Outputs.PrivateSub1VPCStackOut
+        PrivateSub2Param: !GetAtt VPCStack.Outputs.PrivateSub2VPCStackOut
+        DBInstanceParam: !GetAtt DBInstanceStack.Outputs.DBRDSOut
+        ExternalLBSGParam: !GetAtt SecurityGroupsStack.Outputs.ExternalLBSGOut
+        PublicSub1param: !GetAtt VPCStack.Outputs.PubSub1VPCStackOut
+        PublicSub2param: !GetAtt VPCStack.Outputs.PubSub2VPCStackOut
+      TemplateURL: https://akbarnestedstacktest.s3.us-west-2.amazonaws.com/Loadbalancers(5).yaml
+      TimeoutInMinutes: 4
+
+  ASGStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      Parameters:
+        EnvParamASG: !Ref EnvRoot
+        InstanceTypeParam: !Ref InstanceType
+        KeyNameParam: !Ref KeyName
+        ImageIdParam: !Ref AmazonImageID
+        WebServerLaunchTemplateNameParam: !Ref WebServerLaunchTemplateName
+        SecurityGroupParam: !GetAtt SecurityGroupsStack.Outputs.webserverSGOut
+        IamInstanceProfileParam: !GetAtt IAMStack.Outputs.SSMInstanceProfileOut
+        DBHOSTParam: !GetAtt LoadBalancersStack.Outputs.NLBOut
+        PrivateSub1Param: !GetAtt VPCStack.Outputs.PrivateSub1VPCStackOut
+        PrivateSub2Param: !GetAtt VPCStack.Outputs.PrivateSub2VPCStackOut
+        TargetGroupARNsParam: !GetAtt LoadBalancersStack.Outputs.LBTargetGroupOut
+      TemplateURL: https://akbarnestedstacktest.s3.us-west-2.amazonaws.com/asg(6-Nested).yaml
+      TimeoutInMinutes: 4

@@ -1,0 +1,124 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: Security Groups
+
+
+Parameters:
+  EnvParamLB:
+    Description: Your environment name
+    Type: String
+  VpcLBParam:
+    Description: From VPC Stack
+    Type: String
+  PublicSub1param:
+    Description: Please enter the IP range (CIDR notation) for the public subnet 1
+    Type: String
+  PublicSub2param:
+    Description: Please enter the IP range (CIDR notation) for the public subnet 1
+    Type: String
+  PrivateSub1Param:
+    Description: From VPC Stack
+    Type: String 
+  PrivateSub2Param:
+    Description: From VPC Stack
+    Type: String 
+  DBInstanceParam:
+    Description: From DB Stack
+    Type: String
+
+  ExternalLBSGParam:
+    Description: Load balancer SG
+    Type: String
+
+Resources:
+  NLB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Join ["-", [ak, NLB, !Ref EnvParamLB]]
+      Scheme: internal
+      Subnets:
+        - !Ref PrivateSub1Param
+        - !Ref PrivateSub2Param
+      Type: network
+      Tags: 
+        - Key: Name
+          Value: !Join ["-", [ak, NLB, !Ref EnvParamLB]]
+  NLBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Join ["-", [ak, NTG, !Ref EnvParamLB]]
+      Port: 3306
+      Protocol: TCP
+      VpcId: !Ref VpcLBParam
+      HealthCheckEnabled: True
+      HealthCheckIntervalSeconds: 10
+      HealthCheckPort: 3306
+      HealthCheckProtocol: TCP
+      HealthCheckTimeoutSeconds: 10
+      HealthyThresholdCount: 3
+      TargetGroupAttributes: 
+        -   Key: deregistration_delay.timeout_seconds
+            Value: 60
+      Targets:
+        - Id: !Ref DBInstanceParam
+      
+  NLBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref NLB
+      Port: 3306
+      Protocol: TCP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref NLBTargetGroup
+
+#   #Application load balancer (Internet facing)
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties: 
+      Name: !Join ["-", [ak, LB, !Ref EnvParamLB]]
+      Scheme: internet-facing
+      SecurityGroups: 
+        - !Ref ExternalLBSGParam
+      Subnets: 
+        - !Ref PublicSub1param
+        - !Ref PublicSub2param
+      Tags: 
+        - Key: Name
+          Value: !Join ["-", [ak, LB, !Ref EnvParamLB]]
+  LBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Join ["-", [ak, TG, !Ref EnvParamLB]]
+      HealthCheckIntervalSeconds: 6
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      VpcId: !Ref VpcLBParam
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 2
+      TargetGroupAttributes: 
+        -   Key: deregistration_delay.timeout_seconds
+            Value: 60
+
+      # Targets:
+      # - Id: !Ref WebServer
+
+  LBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ALB
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref LBTargetGroup
+
+Outputs:
+  LBTargetGroupOut:
+    Description: Load balancer target group to register the target.
+    Value: !Ref LBTargetGroup
+
+  NLBOut:
+    Description: Network load balancer
+    Value: !GetAtt NLB.DNSName

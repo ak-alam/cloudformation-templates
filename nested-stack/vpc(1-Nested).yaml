@@ -1,0 +1,205 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: VPC Stack
+
+Parameters:
+  EnvParamVPC:
+    Description: Your environment name
+    Type: String
+
+  Vpcparam:
+    # Default: 10.0.0.0/16
+    # Description: Please enter the IP range (CIDR notation) for this VPC
+    Type: String
+
+  PublicSubnet1param:
+    # Default: 10.0.1.0/24
+    # Description: Please enter the IP range (CIDR notation) for the public subnet 1
+    Type: String
+
+  PublicSubnet2param:
+    # Default: 10.0.2.0/24
+    # Description: Please enter the IP range (CIDR notation) for the public subnet 2
+    Type: String
+
+  PublicSubnet3param:
+    # Default: 10.0.2.0/24
+    # Description: Please enter the IP range (CIDR notation) for the public subnet 2
+    Type: String
+
+  PrivateSubnet1param:
+    # Default: 10.0.3.0/24
+    # Description: Please enter the IP range (CIDR notation) for the private subnet 1
+    Type: String
+
+  PrivateSubnet2param:
+    # Default: 10.0.4.0/24
+    # Description: Please enter the IP range (CIDR notation) for the private subnet 2
+    Type: String
+
+
+Resources:
+  #VPC Creation
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref Vpcparam
+      EnableDnsHostnames: true
+      Tags:
+      - Key: Name
+        Value: !Join ["-", [ak, VPC, !Ref EnvParamVPC]]
+
+  #Subnets Creations
+  PubSub1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: !Ref PublicSubnet1param
+      MapPublicIpOnLaunch: true
+      Tags:
+      - Key: Name
+        Value: !Join ["-", [ak, AkPubSub1, !Ref EnvParamVPC]]
+  PubSub2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: !Ref PublicSubnet2param
+      MapPublicIpOnLaunch: true
+      Tags:
+      - Key: Name
+        Value: !Join ["-", [ak, AkPubSub2, !Ref EnvParamVPC]] 
+  PubSub3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [2, !GetAZs '']
+      CidrBlock: !Ref PublicSubnet3param
+      MapPublicIpOnLaunch: true
+      Tags:
+      - Key: Name
+        Value: !Join ["-", [ak, AkPubSub2, !Ref EnvParamVPC]] 
+  PrivateSub1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: !Ref PrivateSubnet1param
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: Name
+        Value: !Join ["-", [ak, AkPrivateSub1, !Ref EnvParamVPC]]
+  PrivateSub2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: !Ref PrivateSubnet2param
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: Name
+        Value: !Join ["-", [ak, AkPrivateSub2, !Ref EnvParamVPC]]
+
+  #Public and Private Route Table Creation and route assosication.
+  PubRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Join ["-", [ak, PubRT, !Ref EnvParamVPC]]
+  IGWRoute:
+    Type: AWS::EC2::Route
+    DependsOn: IGWAttachment
+    Properties:
+      RouteTableId: !Ref PubRT
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId: !Ref IGW   
+
+  PrivateRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Join ["-", [ak, AkPrivateRT, !Ref EnvParamVPC]]
+  NATGWRoute:
+    Type: AWS::EC2::Route
+    DependsOn: NatGW
+    Properties:
+      RouteTableId: !Ref PrivateRT
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId: !Ref NatGW  
+
+  #Internet Gateway and Nat Gateway
+  IGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+      - Key: Name
+        Value:  AkIGW
+  IGWAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref IGW
+      VpcId: !Ref VPC
+  NatGW:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGWEIP.AllocationId
+      SubnetId: !Ref PubSub1
+      Tags:
+      - Key: Name
+        Value: !Join ["-", [ak, NatGW, !Ref EnvParamVPC]]
+  NatGWEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: VPC
+
+  # Public and private route table subnet associations   
+  PubSub1RTAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PubSub1
+      RouteTableId: !Ref PubRT
+  PubSub2RTAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PubSub2
+      RouteTableId: !Ref PubRT
+  PrivateSub1RTAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSub1
+      RouteTableId: !Ref PrivateRT
+  PrivateSub2RTAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSub2
+      RouteTableId: !Ref PrivateRT
+
+#Outputs I need to reference
+# VPC logical name
+# Public and private subnet logical names 
+Outputs:
+
+  VPCStackOut:
+    Description: "Return logical id of the of vpc using ref function"
+    Value: !Ref VPC
+
+  PubSub1VPCStackOut:
+    Description: First subnet
+    Value: !Ref PubSub1
+
+  PubSub2VPCStackOut:
+    Description: Second subnet
+    Value: !Ref PubSub2
+    
+  PrivateSub1VPCStackOut:
+    Description: Frist subnet
+    Value: !Ref PrivateSub1
+
+  PrivateSub2VPCStackOut:
+    Description: Second subnet
+    Value: !Ref PrivateSub2
